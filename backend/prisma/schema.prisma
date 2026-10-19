@@ -1,9 +1,577 @@
 generator client {
   provider = "prisma-client-js"
 }
-
 datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
+}
+
+enum RoleCode {
+  ADMIN
+  FACULTY
+  COURSE_COORDINATOR
+}
+
+enum DegreeLevel {
+  UG
+  PG
+  DOCTORAL
+}
+
+enum SemesterType {
+  ODD
+  EVEN
+  SUMMER
+}
+
+enum OfferingStatus {
+  PLANNED
+  ACTIVE
+  COMPLETED
+  ARCHIVED
+}
+
+enum AssignmentRole {
+  PRIMARY_INSTRUCTOR
+  CO_INSTRUCTOR
+  LAB_INSTRUCTOR
+}
+
+enum ScopeType {
+  COURSE_LEVEL
+  SECTION_LEVEL
+  HYBRID
+}
+
+enum CourseFileStatus {
+  DRAFT
+  IN_PROGRESS
+  SUBMITTED_FOR_REVIEW
+  APPROVED
+  REVISION_REQUESTED
+  ARCHIVED
+}
+
+enum ItemStatus {
+  PENDING
+  SUBMITTED
+  UNDER_REVIEW
+  APPROVED
+  REVISION_REQUESTED
+}
+
+enum ValidationStatus {
+  NOT_CHECKED
+  VALID
+  INVALID
+  NEEDS_REVIEW
+}
+
+enum ReviewStatus {
+  APPROVED
+  REVISION_REQUESTED
+  REJECTED
+}
+
+enum ContentReviewStatus {
+  DRAFT
+  EDITED
+  ACCEPTED
+  REJECTED
+}
+
+enum AlertType {
+  DEADLINE_APPROACHING
+  OVERDUE
+  ESCALATED
+}
+
+enum AITaskType {
+  TEXT_EXTRACTION
+  SYLLABUS_ALIGNMENT_CHECK
+  CO_PO_VALIDATION
+  QUALITY_AUDIT
+  SUMMARY_GENERATION
+  SECTION_RELEVANCE_CHECK
+}
+
+enum AIProcessingStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum ConsolidationType {
+  FULL_COURSE_FILE_ARCHIVE
+  CONSOLIDATED_ATTENDANCE
+  CONSOLIDATED_MARKS
+  CONSOLIDATED_CO_ATTAINMENT
+  AI_SYNTHESIZED_REVIEW
+}
+
+enum OutcomeType {
+  CO
+  PO
+  PSO
+}
+
+enum MappingLevel {
+  NONE
+  LOW
+  MEDIUM
+  HIGH
+}
+
+model Role {
+  id          Int        @id @default(autoincrement())
+  code        RoleCode   @unique
+  name        String
+  description String?
+  createdAt   DateTime   @default(now())
+  users       UserRole[]
+}
+
+model User {
+  id                 Int      @id @default(autoincrement())
+  employeeId         String   @unique
+  fullName           String
+  email              String   @unique
+  passwordHash       String
+  mustChangePassword Boolean  @default(true)
+  phone              String?
+  designation        String?
+  schoolId           Int?
+  department         String?
+  isActive           Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  school                 School?                    @relation(fields: [schoolId], references: [id], onDelete: SetNull)
+  roles                  UserRole[]
+  coordinatedOfferings   CourseOffering[]           @relation("OfferingCoordinator")
+  facultyAssignments     SectionFacultyAssignment[]
+  assignedItems          CourseFileItem[]           @relation("AssignedFaculty")
+  lockedItems            CourseFileItem[]           @relation("ItemLocker")
+  submissions            DocumentSubmission[]       @relation("Uploader")
+  submissionReviews      SubmissionReview[]         @relation("Reviewer")
+  alerts                 MissingSubmissionAlert[]
+  auditLogs              AuditLog[]
+  generatedContents      ConsolidatedContent[]      @relation("ContentGenerator")
+  reviewedContents       ConsolidatedContent[]      @relation("ContentReviewer")
+  outcomeMappingsCreated CourseOutcomeMapping[]     @relation("MappingCreator")
+
+  @@index([schoolId])
+  @@index([department])
+  @@index([isActive])
+}
+
+model UserRole {
+  userId     Int
+  roleId     Int
+  assignedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Restrict)
+
+  @@id([userId, roleId])
+  @@index([roleId])
+}
+
+model School {
+  id        Int      @id @default(autoincrement())
+  code      String   @unique
+  name      String
+  vision    String?
+  mission   String?
+  createdAt DateTime @default(now())
+
+  users    User[]
+  programs Program[]
+}
+
+model Program {
+  id          Int         @id @default(autoincrement())
+  schoolId    Int
+  code        String      @unique
+  name        String
+  degreeLevel DegreeLevel @default(UG)
+  peos        String?
+  posPsos     String?
+  createdAt   DateTime    @default(now())
+
+  school  School   @relation(fields: [schoolId], references: [id], onDelete: Restrict)
+  courses Course[]
+
+  @@index([schoolId])
+}
+
+model AcademicYear {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  startDate DateTime @db.Date
+  endDate   DateTime @db.Date
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  semesters Semester[]
+}
+
+model Semester {
+  id             Int          @id @default(autoincrement())
+  academicYearId Int
+  type           SemesterType
+  name           String
+  startDate      DateTime     @db.Date
+  endDate        DateTime     @db.Date
+  isCurrent      Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+
+  academicYear AcademicYear     @relation(fields: [academicYearId], references: [id], onDelete: Restrict)
+  offerings    CourseOffering[]
+
+  @@unique([academicYearId, type, name])
+  @@index([academicYearId])
+  @@index([isCurrent])
+}
+
+model Course {
+  id          Int      @id @default(autoincrement())
+  programId   Int
+  code        String   @unique
+  title       String
+  credits     Decimal  @default(3.0) @db.Decimal(3, 1)
+  description String?
+  objectives  String?
+  syllabus    String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  program   Program          @relation(fields: [programId], references: [id], onDelete: Restrict)
+  offerings CourseOffering[]
+  outcomes  CourseOutcome[]
+
+  @@index([programId])
+  @@index([isActive])
+}
+
+model CourseOffering {
+  id            Int            @id @default(autoincrement())
+  courseId      Int
+  semesterId    Int
+  coordinatorId Int
+  status        OfferingStatus @default(ACTIVE)
+  createdAt     DateTime       @default(now())
+
+  course      Course      @relation(fields: [courseId], references: [id], onDelete: Restrict)
+  semester    Semester    @relation(fields: [semesterId], references: [id], onDelete: Restrict)
+  coordinator User        @relation("OfferingCoordinator", fields: [coordinatorId], references: [id], onDelete: Restrict)
+  sections    Section[]
+  courseFile  CourseFile?
+
+  @@unique([courseId, semesterId])
+  @@index([semesterId])
+  @@index([coordinatorId])
+  @@index([status])
+}
+
+model Section {
+  id               Int      @id @default(autoincrement())
+  courseOfferingId Int
+  name             String
+  capacity         Int      @default(60)
+  createdAt        DateTime @default(now())
+
+  offering    CourseOffering             @relation(fields: [courseOfferingId], references: [id], onDelete: Cascade)
+  assignments SectionFacultyAssignment[]
+  fileItems   CourseFileItem[]
+
+  @@unique([courseOfferingId, name])
+  @@index([courseOfferingId])
+}
+
+model SectionFacultyAssignment {
+  id             Int            @id @default(autoincrement())
+  sectionId      Int
+  facultyId      Int
+  assignmentRole AssignmentRole @default(PRIMARY_INSTRUCTOR)
+  assignedAt     DateTime       @default(now())
+
+  section Section @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  faculty User    @relation(fields: [facultyId], references: [id], onDelete: Restrict)
+
+  @@unique([sectionId, facultyId])
+  @@index([facultyId])
+}
+
+model CourseFileTemplate {
+  id          Int      @id @default(autoincrement())
+  code        String   @unique
+  name        String
+  version     String   @default("1.0")
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  sections    TemplateSection[]
+  courseFiles CourseFile[]
+}
+
+model TemplateSection {
+  id          Int       @id @default(autoincrement()) @map("template_section_id")
+  templateId  Int
+  number      Int
+  title       String
+  description String?
+  scope       ScopeType @default(COURSE_LEVEL)
+  mandatory   Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+
+  template          CourseFileTemplate    @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  items             CourseFileItem[]
+  consolidatedItems ConsolidatedContent[]
+
+  @@unique([templateId, number])
+  @@index([number])
+  @@index([templateId])
+}
+
+model CourseFile {
+  id               Int              @id @default(autoincrement())
+  courseOfferingId Int              @unique
+  templateId       Int
+  status           CourseFileStatus @default(IN_PROGRESS)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  offering CourseOffering        @relation(fields: [courseOfferingId], references: [id], onDelete: Restrict)
+  template CourseFileTemplate    @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  items    CourseFileItem[]
+  contents ConsolidatedContent[]
+
+  @@index([templateId])
+  @@index([status])
+}
+
+model CourseFileItem {
+  id                Int        @id @default(autoincrement())
+  courseFileId      Int
+  templateSectionId Int
+  sectionId         Int?
+  assignedFacultyId Int?
+  deadline          DateTime?
+  status            ItemStatus @default(PENDING)
+  isLocked          Boolean    @default(false)
+  lockedBy          Int?
+  lockedAt          DateTime?
+  lockReason        String?
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  courseFile      CourseFile               @relation(fields: [courseFileId], references: [id], onDelete: Cascade)
+  templateSection TemplateSection          @relation(fields: [templateSectionId], references: [id], onDelete: Restrict)
+  section         Section?                 @relation(fields: [sectionId], references: [id], onDelete: Restrict)
+  assignedFaculty User?                    @relation("AssignedFaculty", fields: [assignedFacultyId], references: [id], onDelete: SetNull)
+  locker          User?                    @relation("ItemLocker", fields: [lockedBy], references: [id], onDelete: SetNull)
+  submissions     DocumentSubmission[]
+  alerts          MissingSubmissionAlert[]
+
+  // This compound unique constraint does not prevent duplicate rows
+  // when sectionId is NULL. The partial unique index in
+  // prisma/partial_indexes.sql handles course-level items.
+  @@unique([courseFileId, templateSectionId, sectionId])
+  @@index([courseFileId])
+  @@index([templateSectionId])
+  @@index([sectionId])
+  @@index([assignedFacultyId])
+  @@index([lockedBy])
+  @@index([status])
+  @@index([deadline])
+}
+
+model DocumentSubmission {
+  id                Int              @id @default(autoincrement())
+  itemId            Int
+  versionNumber     Int
+  fileName          String
+  storagePath       String
+  fileSizeBytes     BigInt
+  mimeType          String
+  checksumSha256    String?
+  uploadedBy        Int
+  notes             String?
+  isCurrentVersion  Boolean          @default(true)
+  validationStatus  ValidationStatus @default(NOT_CHECKED)
+  validationMessage String?
+  isDeleted         Boolean          @default(false)
+  deletedAt         DateTime?
+  uploadedAt        DateTime         @default(now())
+
+  item        CourseFileItem              @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  uploader    User                        @relation("Uploader", fields: [uploadedBy], references: [id], onDelete: Restrict)
+  reviews     SubmissionReview[]
+  aiRecords   AIProcessingRecord[]
+  sourceLinks ConsolidatedContentSource[]
+
+  @@unique([itemId, versionNumber])
+  @@index([itemId])
+  @@index([uploadedBy])
+  @@index([validationStatus])
+  @@index([isDeleted])
+  @@index([itemId, isCurrentVersion])
+}
+
+model SubmissionReview {
+  id           Int          @id @default(autoincrement())
+  submissionId Int
+  reviewedBy   Int
+  status       ReviewStatus
+  comments     String
+  reviewedAt   DateTime     @default(now())
+
+  submission DocumentSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  reviewer   User               @relation("Reviewer", fields: [reviewedBy], references: [id], onDelete: Restrict)
+
+  @@index([submissionId])
+  @@index([reviewedBy])
+  @@index([status])
+}
+
+model MissingSubmissionAlert {
+  id         Int       @id @default(autoincrement())
+  itemId     Int
+  facultyId  Int
+  type       AlertType @default(OVERDUE)
+  sentAt     DateTime  @default(now())
+  isResolved Boolean   @default(false)
+  resolvedAt DateTime?
+
+  item    CourseFileItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  faculty User           @relation(fields: [facultyId], references: [id], onDelete: Cascade)
+
+  @@index([itemId])
+  @@index([facultyId])
+  @@index([isResolved])
+}
+
+model AuditLog {
+  id         Int      @id @default(autoincrement())
+  userId     Int?
+  actionType String
+  entityName String
+  entityId   Int
+  details    Json?
+  createdAt  DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([actionType])
+  @@index([entityName, entityId])
+  @@index([createdAt])
+}
+
+model AIProcessingRecord {
+  id               Int                @id @default(autoincrement())
+  submissionId     Int
+  taskType         AITaskType
+  status           AIProcessingStatus @default(PENDING)
+  extractedText    String?
+  summary          String?
+  confidenceScore  Decimal?           @db.Decimal(5, 2)
+  findings         Json?
+  modelName        String?
+  promptTokens     Int?
+  completionTokens Int?
+  errorMessage     String?
+  processedAt      DateTime?
+  createdAt        DateTime           @default(now())
+
+  submission DocumentSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@index([submissionId])
+  @@index([status])
+  @@index([taskType])
+}
+
+model ConsolidatedContent {
+  id                Int                 @id @default(autoincrement())
+  courseFileId      Int
+  templateSectionId Int?
+  title             String
+  type              ConsolidationType
+  contentText       String?
+  storagePath       String?
+  fileName          String?
+  mimeType          String?
+  fileSizeBytes     BigInt?
+  isAiGenerated     Boolean             @default(false)
+  generatedBy       Int?
+  reviewStatus      ContentReviewStatus @default(DRAFT)
+  reviewedBy        Int?
+  reviewedAt        DateTime?
+  summaryNotes      String?
+  generatedAt       DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  courseFile      CourseFile                  @relation(fields: [courseFileId], references: [id], onDelete: Cascade)
+  templateSection TemplateSection?            @relation(fields: [templateSectionId], references: [id], onDelete: SetNull)
+  generator       User?                       @relation("ContentGenerator", fields: [generatedBy], references: [id], onDelete: SetNull)
+  reviewer        User?                       @relation("ContentReviewer", fields: [reviewedBy], references: [id], onDelete: SetNull)
+  sources         ConsolidatedContentSource[]
+
+  @@index([courseFileId])
+  @@index([templateSectionId])
+  @@index([generatedBy])
+  @@index([reviewedBy])
+  @@index([reviewStatus])
+  @@index([type])
+}
+
+model ConsolidatedContentSource {
+  id             Int      @id @default(autoincrement())
+  consolidatedId Int
+  submissionId   Int
+  sourceRole     String?
+  linkedAt       DateTime @default(now())
+
+  consolidated ConsolidatedContent @relation(fields: [consolidatedId], references: [id], onDelete: Cascade)
+  submission   DocumentSubmission  @relation(fields: [submissionId], references: [id], onDelete: Restrict)
+
+  @@unique([consolidatedId, submissionId])
+  @@index([submissionId])
+}
+
+model CourseOutcome {
+  id          Int         @id @default(autoincrement())
+  courseId    Int
+  code        String
+  description String
+  type        OutcomeType @default(CO)
+  createdAt   DateTime    @default(now())
+
+  course   Course                 @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  mappings CourseOutcomeMapping[]
+
+  @@unique([courseId, code])
+  @@index([courseId])
+}
+
+model CourseOutcomeMapping {
+  id              Int          @id @default(autoincrement())
+  courseOutcomeId Int
+  mappedCode      String
+  level           MappingLevel @default(NONE)
+  notes           String?
+  createdBy       Int?
+  createdAt       DateTime     @default(now())
+
+  courseOutcome CourseOutcome @relation(fields: [courseOutcomeId], references: [id], onDelete: Cascade)
+  creator       User?         @relation("MappingCreator", fields: [createdBy], references: [id], onDelete: SetNull)
+
+  @@unique([courseOutcomeId, mappedCode])
+  @@index([courseOutcomeId])
+  @@index([createdBy])
 }
