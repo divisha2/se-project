@@ -9,17 +9,35 @@ export default function Dashboard({ user }) {
     fetchStats()
   }, [])
 
-  const fetchStats = async () => {
-    try {
-      const token = localStorage.getItem('token')
-      const { data } = await axios.get('/api/courses', {
-        headers: { Authorization: `Bearer ${token}` }
-      })
-      setStats({ ...stats, courses: data.length })
-    } catch (error) {
-      console.error('Error fetching stats:', error)
-    }
+  
+const fetchStats = async () => {
+  try {
+    const token = localStorage.getItem('token');
+
+    const { data } = await axios.get('/api/courses', {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    const courseList = Array.isArray(data)
+      ? data
+      : Array.isArray(data.courses)
+        ? data.courses
+        : [];
+
+    setStats(prevStats => ({
+      ...prevStats,
+      courses: courseList.length,
+    }));
+  } catch (error) {
+    console.error(
+      'Error fetching stats:',
+      error.response?.data || error.message
+    );
   }
+};
+
 
   const getStatCards = () => {
     if (user.role === 'coordinator') {

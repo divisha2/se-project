@@ -9,21 +9,37 @@ export default function Courses({ user }) {
 
   useEffect(() => {
     fetchCourses()
+
   }, [])
 
-  const fetchCourses = async () => {
-    try {
-      const token = localStorage.getItem('token')
-      const { data } = await axios.get('/api/courses', {
-        headers: { Authorization: `Bearer ${token}` }
-      })
-      setCourses(data)
-    } catch (error) {
-      console.error('Error fetching courses:', error)
-    } finally {
-      setLoading(false)
-    }
+ 
+const fetchCourses = async () => {
+  try {
+    const token = localStorage.getItem('token');
+
+    const { data } = await axios.get('/api/courses', {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    // Backend returns { courses: [...] }
+    const courseList = Array.isArray(data)
+      ? data
+      : Array.isArray(data.courses)
+        ? data.courses
+        : [];
+
+    setCourses(courseList);
+  } catch (error) {
+    console.error(
+      'Error fetching courses:',
+      error.response?.data || error.message
+    );
+  } finally {
+    setLoading(false);
   }
+};
 
   if (loading) {
     return <div className="text-center text-gray-400">Loading courses...</div>
