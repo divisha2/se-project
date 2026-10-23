@@ -63,22 +63,31 @@ The BMU Course File Management System provides three dedicated role workspaces:
 
 ---
 
-## 🛠️ Tech Stack
+## 🛠️ Repository Structure
 
-- **Frontend**: React 18, React Router v6, Lucide React icons
-- **Styling**: Vanilla CSS with custom BMU University design system (Navy blue palette, responsive sidebar/topbar layout)
-- **Tooling**: Vite 8, TypeScript support
-- **Database Schema**: Normalized relational SQL schema in `database/schema.sql` for Postgres/MySQL
+```
+├── frontend/             # Complete 25-section BMU React frontend prototype
+│   ├── src/
+│   │   ├── components/   # Layout, Sidebar, Topbar, Modals, Shared Badges
+│   │   ├── context/      # AuthContext with demo role switching
+│   │   ├── data/         # Official 25-section template & mock data
+│   │   └── pages/        # Admin, Faculty, Coordinator workspaces
+│   ├── index.html
+│   └── vite.config.js
+├── backend/              # Node.js + Express + Prisma backend microservices
+│   ├── prisma/           # Database schema & partial indexes
+│   └── src/              # Auth, courses, submissions, and consolidation modules
+├── database/             # Normalized relational SQL schema
+│   └── schema.sql
+├── client/               # Legacy / alternative frontend client
+└── SETUP_INSTRUCTIONS.md
+```
 
 ---
 
 ## 🚀 Getting Started
 
-### Prerequisites
-- Node.js (v18+)
-- npm or yarn
-
-### Installation & Run
+### 1. Running the BMU Frontend Application
 
 ```bash
 # Navigate to the frontend directory
@@ -87,13 +96,27 @@ cd frontend
 # Install dependencies
 npm install
 
-# Start local development server
+# Start local Vite development server
 npm run dev
 ```
 
 Visit `http://localhost:5173/` in your browser.
 
-### 🔑 Demo Accounts (Quick Sign-In)
+#### 🔑 Demo Accounts (One-Click Sign-In):
 - **Admin**: `admin@bmu.edu.in` / `admin123`
 - **Faculty**: `priya.sharma@bmu.edu.in` / `faculty123`
 - **Course Coordinator**: `neha.gupta@bmu.edu.in` / `coord123`
+
+### 2. Running the Backend Server
+
+```bash
+cd backend
+npm install
+npm run dev
+```
+
+---
+
+## 📄 License
+
+MIT

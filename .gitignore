@@ -1,12 +1,19 @@
 # Node dependencies
 node_modules/
 **/node_modules/
+client/node_modules/
+backend/node_modules/
 
 # Production build
 dist/
 **/dist/
 dist-ssr/
 **/dist-ssr/
+client/dist/
+
+# File uploads and temporary storage
+uploads/
+**/uploads/
 
 # Logs
 logs/
@@ -21,7 +28,9 @@ pnpm-debug.log*
 !.env.example
 
 # Editor directories and files
-.vscode/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
 .idea/
 *.suo
 *.ntvs*
