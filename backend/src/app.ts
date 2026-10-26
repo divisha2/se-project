@@ -6,6 +6,11 @@ import { env } from './config/env';
 import routes from './routes';
 import { errorHandler, notFound } from './middleware/errorHandler';
 
+// Prisma BigInt columns (file sizes) can't be JSON-serialised by default.
+(BigInt.prototype as any).toJSON = function () {
+  return Number(this);
+};
+
 const app = express();
 
 app.use(helmet());

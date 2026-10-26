@@ -3,9 +3,9 @@ import { generationService } from './generation.service';
 
 export const generationController = {
   generate: async (req: Request, res: Response) => {
-    res.status(202).json(await generationService.generate(req.params.courseId));
+    res.status(201).json(await generationService.generate(req.user!.id, req.params.courseId, req.query.force === 'true'));
   },
   getLatest: async (req: Request, res: Response) => {
-    res.json(await generationService.getLatest(req.params.courseId));
+    res.json(await generationService.getLatest(req.user!.id, req.params.courseId));
   },
 };

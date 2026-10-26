@@ -104,11 +104,18 @@ enum AIProcessingStatus {
 }
 
 enum ConsolidationType {
+  SECTION_TEXT
   FULL_COURSE_FILE_ARCHIVE
   CONSOLIDATED_ATTENDANCE
   CONSOLIDATED_MARKS
   CONSOLIDATED_CO_ATTAINMENT
   AI_SYNTHESIZED_REVIEW
+}
+
+enum PartStatus {
+  OPEN
+  SUBMITTED
+  REOPENED
 }
 
 enum OutcomeType {
@@ -282,11 +289,15 @@ model Section {
   courseOfferingId Int
   name             String
   capacity         Int      @default(60)
+  // "Complete submission": set when a faculty member submits every part of this section.
+  finalSubmittedAt DateTime?
+  finalSubmittedBy Int?
   createdAt        DateTime @default(now())
 
   offering    CourseOffering             @relation(fields: [courseOfferingId], references: [id], onDelete: Cascade)
   assignments SectionFacultyAssignment[]
   fileItems   CourseFileItem[]
+  partSubmissions PartSubmission[]
 
   @@unique([courseOfferingId, name])
   @@index([courseOfferingId])
@@ -316,6 +327,7 @@ model CourseFileTemplate {
   createdAt   DateTime @default(now())
 
   sections    TemplateSection[]
+  parts       TemplatePart[]
   courseFiles CourseFile[]
 }
 
@@ -327,15 +339,61 @@ model TemplateSection {
   description String?
   scope       ScopeType @default(COURSE_LEVEL)
   mandatory   Boolean   @default(true)
+  partId      Int?
+  keywords    String[]  @default([])
   createdAt   DateTime  @default(now())
 
   template          CourseFileTemplate    @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  part              TemplatePart?         @relation(fields: [partId], references: [id], onDelete: SetNull)
   items             CourseFileItem[]
   consolidatedItems ConsolidatedContent[]
 
   @@unique([templateId, number])
   @@index([number])
   @@index([templateId])
+  @@index([partId])
+}
+
+// A "part" groups related template sections so a faculty member can submit
+// them together (e.g. "Internal Assessments" = sections 14, 15, 16).
+model TemplatePart {
+  id          Int      @id @default(autoincrement())
+  templateId  Int
+  number      Int
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+
+  template        CourseFileTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  sections        TemplateSection[]
+  partSubmissions PartSubmission[]
+
+  @@unique([templateId, number])
+  @@index([templateId])
+}
+
+// One row per (course file, part, section). sectionId is NULL for the
+// course-level part (coordinator's common info). See partial_indexes.sql.
+model PartSubmission {
+  id           Int        @id @default(autoincrement())
+  courseFileId Int
+  partId       Int
+  sectionId    Int?
+  status       PartStatus @default(OPEN)
+  submittedBy  Int?
+  submittedAt  DateTime?
+  reopenedAt   DateTime?
+  notes        String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  courseFile CourseFile   @relation(fields: [courseFileId], references: [id], onDelete: Cascade)
+  part       TemplatePart @relation(fields: [partId], references: [id], onDelete: Cascade)
+  section    Section?     @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+
+  @@index([courseFileId])
+  @@index([partId])
+  @@index([sectionId])
 }
 
 model CourseFile {
@@ -350,6 +408,7 @@ model CourseFile {
   template CourseFileTemplate    @relation(fields: [templateId], references: [id], onDelete: Restrict)
   items    CourseFileItem[]
   contents ConsolidatedContent[]
+  partSubmissions PartSubmission[]
 
   @@index([templateId])
   @@index([status])
@@ -367,6 +426,11 @@ model CourseFileItem {
   lockedBy          Int?
   lockedAt          DateTime?
   lockReason        String?
+  // Coordinator reopen (FR-FAC-24): item is editable until reopenedUntil.
+  reopenedUntil     DateTime?
+  reopenedBy        Int?
+  reopenedAt        DateTime?
+  reopenReason      String?
   createdAt         DateTime   @default(now())
   updatedAt         DateTime   @updatedAt
 
@@ -405,6 +469,8 @@ model DocumentSubmission {
   isCurrentVersion  Boolean          @default(true)
   validationStatus  ValidationStatus @default(NOT_CHECKED)
   validationMessage String?
+  isTextEntry       Boolean          @default(false)
+  contentText       String?
   isDeleted         Boolean          @default(false)
   deletedAt         DateTime?
   uploadedAt        DateTime         @default(now())
@@ -482,6 +548,7 @@ model AIProcessingRecord {
   summary          String?
   confidenceScore  Decimal?           @db.Decimal(5, 2)
   findings         Json?
+  suggestedTemplateSectionId Int?
   modelName        String?
   promptTokens     Int?
   completionTokens Int?
@@ -508,6 +575,7 @@ model ConsolidatedContent {
   mimeType          String?
   fileSizeBytes     BigInt?
   isAiGenerated     Boolean             @default(false)
+  isManual          Boolean             @default(false)
   generatedBy       Int?
   reviewStatus      ContentReviewStatus @default(DRAFT)
   reviewedBy        Int?

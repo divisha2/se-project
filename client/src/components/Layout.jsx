@@ -1,5 +1,6 @@
 import { Outlet, Link, useLocation } from 'react-router-dom'
-import { Home, BookOpen, LogOut, User } from 'lucide-react'
+import { Home, BookOpen, LogOut, User, Users } from 'lucide-react'
+import { ROLES, roleLabel } from '../api'
 
 export default function Layout({ user, onLogout }) {
   const location = useLocation()
@@ -7,6 +8,7 @@ export default function Layout({ user, onLogout }) {
   const navItems = [
     { path: '/dashboard', icon: Home, label: 'Dashboard' },
     { path: '/courses', icon: BookOpen, label: 'Courses' },
+    ...(user.role === ROLES.ADMIN ? [{ path: '/users', icon: Users, label: 'Users' }] : []),
   ]
 
   return (
@@ -24,7 +26,7 @@ export default function Layout({ user, onLogout }) {
             <div className="flex items-center gap-6">
               {navItems.map(item => {
                 const Icon = item.icon
-                const isActive = location.pathname === item.path
+                const isActive = location.pathname === item.path || location.pathname.startsWith(item.path + '/')
                 return (
                   <Link
                     key={item.path}
@@ -46,9 +48,9 @@ export default function Layout({ user, onLogout }) {
               <div className="flex items-center gap-3">
                 <div className="flex items-center gap-2 text-sm">
                   <User size={16} className="text-gray-400" />
-                  <span className="text-gray-300">{user.name}</span>
+                  <span className="text-gray-300">{user.fullName}</span>
                   <span className="px-2 py-1 rounded text-xs bg-blue-500/20 text-blue-400 border border-blue-500/30">
-                    {user.role}
+                    {roleLabel(user.role)}
                   </span>
                 </div>
                 <button

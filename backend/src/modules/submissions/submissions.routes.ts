@@ -12,45 +12,61 @@ const router = Router();
 
 router.use(authenticate);
 
-// ---- Faculty ----
+// ---- Faculty: item-centric (an item = one Course File section for one course section) ----
 router.get('/mine', requireRole(ROLES.FACULTY), asyncHandler(submissionsController.listMine));
+
+// Upload a file (multipart field "file") OR enter text (field "text"). First call = version 1,
+// later calls = a new version that becomes current.
 router.post(
-  '/',
+  '/items/:itemId',
   requireRole(ROLES.FACULTY),
   upload.single('file'),
-  asyncHandler(submissionsController.upload),
+  asyncHandler(submissionsController.saveVersion),
 );
-router.put(
-  '/:documentId',
+router.delete('/items/:itemId', requireRole(ROLES.FACULTY), asyncHandler(submissionsController.remove));
+router.post(
+  '/items/:itemId/versions/:versionNumber/restore',
   requireRole(ROLES.FACULTY),
-  upload.single('file'),
-  asyncHandler(submissionsController.replace),
+  asyncHandler(submissionsController.restoreVersion),
 );
-router.delete('/:documentId', requireRole(ROLES.FACULTY), asyncHandler(submissionsController.remove));
 
 // ---- Faculty + Coordinator ----
 router.get(
-  '/:documentId/versions',
+  '/items/:itemId/versions',
   requireRole(ROLES.FACULTY, ROLES.COURSE_COORDINATOR),
   asyncHandler(submissionsController.listVersions),
 );
+router.get(
+  '/:submissionId/download',
+  requireRole(ROLES.FACULTY, ROLES.COURSE_COORDINATOR),
+  asyncHandler(submissionsController.download),
+);
 
 // ---- Course Coordinator ----
-router.get(
-  '/course/:courseId',
-  requireRole(ROLES.COURSE_COORDINATOR),
-  asyncHandler(submissionsController.listForCourse),
-);
+router.get('/course/:courseId', requireRole(ROLES.COURSE_COORDINATOR), asyncHandler(submissionsController.listForCourse));
 router.put(
   '/course/:courseId/deadline',
   requireRole(ROLES.COURSE_COORDINATOR),
-  validate(z.object({ deadline: z.string().datetime() })),
+  validate(
+    z.object({
+      deadline: z.string().datetime(),
+      partId: z.number().int().positive().optional(),
+      sectionId: z.number().int().positive().optional(),
+    }),
+  ),
   asyncHandler(submissionsController.setDeadline),
 );
 router.post(
-  '/:documentId/reopen',
+  '/items/:itemId/reopen',
   requireRole(ROLES.COURSE_COORDINATOR),
+  validate(z.object({ until: z.string().datetime().optional(), reason: z.string().max(500).optional() })),
   asyncHandler(submissionsController.reopen),
+);
+router.post(
+  '/:submissionId/review',
+  requireRole(ROLES.COURSE_COORDINATOR),
+  validate(z.object({ status: z.enum(['APPROVED', 'REVISION_REQUESTED', 'REJECTED']), comments: z.string().min(1).max(1000) })),
+  asyncHandler(submissionsController.review),
 );
 
 export default router;

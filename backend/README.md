@@ -1,49 +1,36 @@
 # Course File Management System - Backend
 
-Express + TypeScript + Prisma (Supabase PostgreSQL). Structure follows the SRS.
+Express + TypeScript + Prisma (Supabase PostgreSQL + Storage).
 
 ## Setup
 
 ```bash
 npm install
-cp .env.example .env        # fill in Supabase + JWT values
-# 1. write prisma/schema.prisma (add generator + datasource blocks)
-# 2. create tables:  npm run prisma:push   (or prisma:migrate)
-npm run prisma:generate
-npm run dev
+cp .env.example .env          # fill in Supabase + JWT (+ optional LLM) values
+npm run db:push               # creates tables + partial unique indexes
+npx prisma generate
+npm run db:seed               # base data, then submission parts + keywords
+npm run dev                   # http://localhost:5000/api/health
 ```
 
-Health check: `GET http://localhost:5000/api/health`
+Create a **private** Storage bucket named as `SUPABASE_STORAGE_BUCKET` in Supabase.
+Seed login: `faculty1@bmu.example`, `course_coordinator1@bmu.example`, `admin1@bmu.example` / `BMU@12345`.
 
-## Structure
+## Concepts
 
-```
-prisma/schema.prisma        your schema (empty)
-src/
-  server.ts / app.ts        entry + express setup
-  config/                   env, prisma client, supabase storage client
-  middleware/               auth (JWT), role guard, upload (multer), validate, errors
-  utils/                    ApiError, asyncHandler
-  constants/                roles, submission statuses, file types
-  jobs/                     background AI queue (PR-05)
-  modules/
-    auth/                   login, me
-    users/                  FR-ADM-01..04
-    courses/                courses, sections, faculty assignment, coordinator (FR-ADM-05..09)
-    course-file/            predefined sections, mandatory/optional (FR-FAC-03, 11)
-    submissions/            upload, validate, versions, locking (FR-FAC-*, FR-CC-01..08)
-    consolidation/          AI processing, review/edit/accept (FR-AI-*, FR-CC-09..16)
-    generation/             final Course File output (FR-CC-17..20)
-```
+- In every `/:courseId` URL, `courseId` is a **CourseOffering id** (a course in a semester).
+- **Item** = one Course File section for one course section (e.g. "14. Internal Assessment Question Papers", Section A).
+- **Part** = a group of sections submitted together. **Complete submission** = all parts of a section submitted.
+- Status shown to users: `PENDING`, `SUBMITTED`, `INVALID`, `LOCKED` (derived; see `utils/itemState.ts`).
 
-Each module has `*.routes.ts`, `*.controller.ts`, `*.service.ts`. Handlers currently return
-`501 Not Implemented`; the FR IDs from the SRS are in comments so you can fill them in
-once your Prisma models exist.
+## Submission flow
 
-## Suggested build order (from SRS 2.5)
-
-1. Auth, users, courses, sections, assignments
-2. Course File sections + faculty uploads (storage, versions, locking)
-3. Completeness tracking + submission validation
-4. AI extraction / consolidation (run via `src/jobs`)
-5. Coordinator review + final Course File generation
+1. `GET  /course-file/:courseId/workspace` - my sections -> parts -> items
+2. `POST /submissions/items/:itemId` - multipart `file` or field `text`; every call is a new version
+3. background check -> `VALID` / `NEEDS_REVIEW` / `INVALID` (poll the workspace)
+4. `DELETE /submissions/items/:itemId`, `POST /submissions/items/:itemId/versions/:n/restore`
+5. `POST /course-file/:courseId/sections/:sectionId/parts/:partId/submit`
+6. `POST /course-file/:courseId/sections/:sectionId/complete`
+7. Coordinator: `GET /course-file/:courseId/completion`, `PUT /submissions/course/:courseId/deadline`,
+   `POST /submissions/items/:itemId/reopen`, `POST /submissions/:id/review`,
+   `POST /consolidation/course/:courseId/run`, review at `/consolidation/...`, `POST /generation/course/:courseId`

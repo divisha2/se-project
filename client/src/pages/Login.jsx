@@ -1,15 +1,9 @@
 import { useState } from 'react'
-import axios from 'axios'
 import { Lock, Mail, AlertCircle } from 'lucide-react'
+import api, { errMsg } from '../api'
 
 export default function Login({ onLogin }) {
-  const [isRegister, setIsRegister] = useState(false)
-  const [formData, setFormData] = useState({
-    name: '',
-    email: '',
-    password: '',
-    role: 'student'
-  })
+  const [formData, setFormData] = useState({ email: '', password: '' })
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -17,13 +11,12 @@ export default function Login({ onLogin }) {
     e.preventDefault()
     setError('')
     setLoading(true)
-
     try {
-      const endpoint = isRegister ? '/api/auth/register' : '/api/auth/login'
-      const { data } = await axios.post(endpoint, formData)
+      // Accounts are created by the Administrator (FR-ADM-01), so there is no sign-up.
+      const { data } = await api.post('/auth/login', formData)
       onLogin(data.token, data.user)
     } catch (err) {
-      setError(err.response?.data?.error || 'Something went wrong')
+      setError(errMsg(err, 'Could not sign in'))
     } finally {
       setLoading(false)
     }
@@ -36,12 +29,8 @@ export default function Login({ onLogin }) {
           <div className="w-16 h-16 bg-blue-600 rounded-xl flex items-center justify-center mx-auto mb-4">
             <Lock className="text-white" size={32} />
           </div>
-          <h1 className="text-3xl font-bold text-white mb-2">
-            {isRegister ? 'Create Account' : 'Welcome Back'}
-          </h1>
-          <p className="text-gray-400">
-            {isRegister ? 'Join the course management platform' : 'Access your courses and files'}
-          </p>
+          <h1 className="text-3xl font-bold text-white mb-2">Welcome Back</h1>
+          <p className="text-gray-400">Sign in to manage Course Files</p>
         </div>
 
         {error && (
@@ -52,19 +41,6 @@ export default function Login({ onLogin }) {
         )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {isRegister && (
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">Name</label>
-              <input
-                type="text"
-                value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:border-blue-500 text-white"
-                required
-              />
-            </div>
-          )}
-
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-2">Email</label>
             <div className="relative">
@@ -93,38 +69,14 @@ export default function Login({ onLogin }) {
             </div>
           </div>
 
-          {isRegister && (
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">Role</label>
-              <select
-                value={formData.role}
-                onChange={(e) => setFormData({ ...formData, role: e.target.value })}
-                className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:border-orange-500/50 text-white"
-              >
-                <option value="faculty">Faculty</option>
-                <option value="coordinator">Course Coordinator</option>
-                <option value="admin">Admin</option>
-              </select>
-            </div>
-          )}
-
           <button
             type="submit"
             disabled={loading}
             className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all"
           >
-            {loading ? 'Processing...' : (isRegister ? 'Sign Up' : 'Sign In')}
+            {loading ? 'Signing in...' : 'Sign In'}
           </button>
         </form>
-
-        <div className="mt-6 text-center">
-          <button
-            onClick={() => setIsRegister(!isRegister)}
-            className="text-gray-400 hover:text-white text-sm transition-colors"
-          >
-            {isRegister ? 'Already have an account? Sign in' : "Don't have an account? Sign up"}
-          </button>
-        </div>
       </div>
     </div>
   )

@@ -1,36 +1,244 @@
+import { prisma } from '../../config/prisma';
+import { env } from '../../config/env';
 import { ApiError } from '../../utils/ApiError';
-// import { enqueueAiJob } from '../../jobs/aiQueue';
+import { audit } from '../../utils/audit';
+import { enqueueAiJob } from '../../jobs/aiQueue';
+import { assertCoordinator, toId } from '../../services/access';
+import { isLlmConfigured, lastUsage, llmText } from '../../services/llm';
+import { getSubmissionText } from '../../services/validation';
+import { ensureCourseFile } from '../course-file/courseFile.service';
 
 // AI-assisted processing + coordinator review.
-//  FR-AI-01 process documents submitted under the same Course File section
-//  FR-AI-02 extract relevant info (PDF/DOCX text extraction first)
-//  FR-AI-03/04 detect similar info across faculty and reduce repetition
-//  FR-AI-05/06 generate consolidated content grounded ONLY in the submitted documents
-//  FR-AI-07 coordinator reviews before it enters the final file
-//  FR-CC-09..12 organize by Course File structure, keep meaningful differences
-//  FR-CC-13..16 review, edit, accept/reject, manually add content
-//  SRS 3.4/3.6: keep a link from consolidated content back to its source documents
-//  PR-05: run via enqueueAiJob(...) so requests return immediately
+//  FR-AI-01..07, FR-CC-09..16, SRS 3.4/3.6 (consolidated text keeps links to its sources)
+// Jobs run through the in-process queue (PR-05). Without an LLM key a deterministic
+// de-duplicating merge is used so the flow still works.
+
+// In-memory job state, keyed "offeringId:templateSectionId". Resets on server restart.
+const jobState = new Map<string, { state: 'QUEUED' | 'RUNNING' | 'FAILED'; error?: string }>();
+const key = (o: number, t: number) => `${o}:${t}`;
+
+const SYSTEM_PROMPT =
+  'You consolidate Course File material that several faculty members submitted for one section of a university course. ' +
+  'Use ONLY facts present in the documents. Do not invent facts, numbers, names or dates. ' +
+  'Merge information that repeats across faculty into one statement. Keep real differences between sections/faculty and label them (e.g. "Section B: ..."). ' +
+  'Write clear plain text with short paragraphs or simple lists. No preamble, no markdown headings.';
+
+const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+const jaccard = (a: Set<string>, b: Set<string>) => {
+  const inter = [...a].filter((x) => b.has(x)).length;
+  return inter / (a.size + b.size - inter || 1);
+};
+
+// Deterministic fallback: drop repeated paragraphs, label what remains by section.
+function fallbackConsolidate(docs: { label: string; text: string }[]): string {
+  const kept: { tokens: Set<string>; label: string; text: string }[] = [];
+  for (const d of docs) {
+    for (const para of d.text.split(/\n{2,}/).map((p) => p.trim()).filter((p) => p.length > 15)) {
+      const tokens = new Set(norm(para).split(' '));
+      if (kept.some((k) => jaccard(k.tokens, tokens) >= 0.8)) continue;
+      kept.push({ tokens, label: d.label, text: para });
+    }
+  }
+  const labels = new Set(kept.map((k) => k.label));
+  return kept.map((k) => (labels.size > 1 ? `[${k.label}] ${k.text}` : k.text)).join('\n\n');
+}
+
+async function consolidateSection(offeringId: number, templateSectionId: number, userId: number, force: boolean) {
+  const offering = await prisma.courseOffering.findUnique({ where: { id: offeringId }, include: { courseFile: true } });
+  if (!offering?.courseFile) return;
+  const courseFile = offering.courseFile;
+
+  const existing = await prisma.consolidatedContent.findFirst({
+    where: { courseFileId: courseFile.id, templateSectionId, isAiGenerated: true },
+  });
+  // Never silently overwrite text the coordinator has edited or accepted.
+  if (existing && !force && (existing.reviewStatus === 'EDITED' || existing.reviewStatus === 'ACCEPTED')) return;
+
+  const ts = await prisma.templateSection.findUniqueOrThrow({ where: { id: templateSectionId } });
+  const subs = await prisma.documentSubmission.findMany({
+    where: {
+      isCurrentVersion: true,
+      isDeleted: false,
+      validationStatus: { in: ['VALID', 'NEEDS_REVIEW'] },
+      item: { courseFileId: courseFile.id, templateSectionId, sectionId: { not: null } },
+    },
+    include: { item: { include: { section: true } }, uploader: { select: { fullName: true } } },
+    orderBy: { itemId: 'asc' },
+  });
+  if (!subs.length) return;
+
+  const docs: { id: number; label: string; text: string }[] = [];
+  for (const s of subs) {
+    const text = await getSubmissionText(s);
+    if (text && text.trim()) docs.push({ id: s.id, label: `Section ${s.item.section?.name} - ${s.uploader.fullName}`, text: text.trim() });
+  }
+  if (!docs.length) throw new Error('None of the submitted files could be read as text');
+
+  let body: string;
+  let model: string | null = null;
+  if (isLlmConfigured()) {
+    const prompt =
+      `Course File section: ${ts.number}. ${ts.title}\n\n` +
+      docs.map((d, i) => `--- Document ${i + 1} (${d.label}) ---\n${d.text.slice(0, 12000)}`).join('\n\n');
+    body = await llmText(SYSTEM_PROMPT, prompt.slice(0, 60000), 3000);
+    model = env.LLM_MODEL ?? null;
+  } else {
+    body = fallbackConsolidate(docs);
+  }
+
+  await prisma.$transaction(async (tx) => {
+    const row = existing
+      ? await tx.consolidatedContent.update({
+          where: { id: existing.id },
+          data: { contentText: body, reviewStatus: 'DRAFT', reviewedBy: null, reviewedAt: null, generatedBy: userId, generatedAt: new Date(), summaryNotes: model ? `Generated by ${model}` : 'Generated by the built-in merge (no LLM configured)' },
+        })
+      : await tx.consolidatedContent.create({
+          data: { courseFileId: courseFile.id, templateSectionId, title: ts.title, type: 'AI_SYNTHESIZED_REVIEW', contentText: body, isAiGenerated: true, generatedBy: userId, summaryNotes: model ? `Generated by ${model}` : 'Generated by the built-in merge (no LLM configured)' },
+        });
+    await tx.consolidatedContentSource.deleteMany({ where: { consolidatedId: row.id } });
+    await tx.consolidatedContentSource.createMany({ data: docs.map((d) => ({ consolidatedId: row.id, submissionId: d.id, sourceRole: d.label })) });
+    await tx.aIProcessingRecord.create({
+      data: {
+        submissionId: docs[0].id,
+        taskType: 'SUMMARY_GENERATION',
+        status: 'COMPLETED',
+        summary: `Consolidated ${docs.length} submission(s) for section ${ts.number}`,
+        modelName: model,
+        promptTokens: model ? lastUsage.prompt : null,
+        completionTokens: model ? lastUsage.completion : null,
+        processedAt: new Date(),
+      },
+    });
+  });
+}
+
+function queueSection(offeringId: number, templateSectionId: number, userId: number, force: boolean) {
+  const k = key(offeringId, templateSectionId);
+  if (jobState.get(k)?.state === 'RUNNING' || jobState.get(k)?.state === 'QUEUED') return;
+  jobState.set(k, { state: 'QUEUED' });
+  enqueueAiJob(async () => {
+    jobState.set(k, { state: 'RUNNING' });
+    try {
+      await consolidateSection(offeringId, templateSectionId, userId, force);
+      jobState.delete(k);
+    } catch (err) {
+      console.error('consolidation failed:', err);
+      jobState.set(k, { state: 'FAILED', error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+}
+
 export const consolidationService = {
-  async runForSection(_courseId: string, _fileSectionId: string) {
-    throw ApiError.notImplemented('consolidation.runForSection');
+  // FR-AI-01: one section (the body field is the template section id)
+  async runForSection(userId: number, courseId: string, templateSectionId: string, force = false) {
+    const offering = await assertCoordinator(userId, courseId);
+    const ts = await prisma.templateSection.findUnique({ where: { id: toId(templateSectionId) } });
+    if (!ts || ts.scope !== 'SECTION_LEVEL') throw ApiError.badRequest('Only faculty-submitted sections can be consolidated');
+    queueSection(offering.id, ts.id, userId, force);
+    return { queued: [ts.number] };
   },
-  async runForCourse(_courseId: string) {
-    throw ApiError.notImplemented('consolidation.runForCourse');
+
+  async runForCourse(userId: number, courseId: string, force = false) {
+    const offering = await assertCoordinator(userId, courseId);
+    const courseFile = await ensureCourseFile(offering.id);
+    const withSubs = await prisma.templateSection.findMany({
+      where: { templateId: courseFile.templateId, scope: 'SECTION_LEVEL', items: { some: { courseFileId: courseFile.id, submissions: { some: { isCurrentVersion: true, isDeleted: false } } } } },
+      orderBy: { number: 'asc' },
+    });
+    withSubs.forEach((t) => queueSection(offering.id, t.id, userId, force));
+    return { queued: withSubs.map((t) => t.number) };
   },
-  async listContent(_courseId: string) {
-    throw ApiError.notImplemented('consolidation.listContent');
+
+  // FR-CC-09: content grouped by Course File section, plus job status.
+  async listContent(userId: number, courseId: string) {
+    const offering = await assertCoordinator(userId, courseId);
+    const courseFile = await ensureCourseFile(offering.id);
+    const rows = await prisma.consolidatedContent.findMany({
+      where: { courseFileId: courseFile.id, type: { in: ['AI_SYNTHESIZED_REVIEW', 'SECTION_TEXT'] } },
+      include: { templateSection: true, sources: true },
+      orderBy: [{ templateSection: { number: 'asc' } }, { id: 'asc' }],
+    });
+    const jobs = [...jobState.entries()]
+      .filter(([k]) => k.startsWith(`${offering.id}:`))
+      .map(([k, v]) => ({ templateSectionId: Number(k.split(':')[1]), ...v }));
+    return {
+      content: rows.map((r) => ({
+        id: r.id,
+        templateSectionId: r.templateSectionId,
+        number: r.templateSection?.number,
+        title: r.title,
+        text: r.contentText,
+        isAiGenerated: r.isAiGenerated,
+        isManual: r.isManual,
+        reviewStatus: r.reviewStatus,
+        notes: r.summaryNotes,
+        sourceCount: r.sources.length,
+        updatedAt: r.updatedAt,
+      })),
+      jobs,
+    };
   },
-  async getSources(_contentId: string) {
-    throw ApiError.notImplemented('consolidation.getSources');
+
+  // SRS 3.4: refer back to the source documents.
+  async getSources(userId: number, contentId: string) {
+    const c = await prisma.consolidatedContent.findUnique({
+      where: { id: toId(contentId) },
+      include: { courseFile: { include: { offering: true } }, sources: { include: { submission: { include: { item: { include: { section: true } }, uploader: { select: { fullName: true } } } } } } },
+    });
+    if (!c) throw ApiError.notFound('Content not found');
+    if (c.courseFile.offering.coordinatorId !== userId) throw ApiError.forbidden('Not your course');
+    return {
+      sources: c.sources.map((s) => ({
+        submissionId: s.submissionId,
+        label: s.sourceRole,
+        fileName: s.submission.fileName,
+        sectionName: s.submission.item.section?.name,
+        uploadedBy: s.submission.uploader.fullName,
+        versionNumber: s.submission.versionNumber,
+      })),
+    };
   },
-  async editContent(_contentId: string, _text: string) {
-    throw ApiError.notImplemented('consolidation.editContent');
+
+  async loadOwned(userId: number, contentId: string) {
+    const c = await prisma.consolidatedContent.findUnique({ where: { id: toId(contentId) }, include: { courseFile: { include: { offering: true } } } });
+    if (!c) throw ApiError.notFound('Content not found');
+    if (c.courseFile.offering.coordinatorId !== userId) throw ApiError.forbidden('Not your course');
+    return c;
   },
-  async setDecision(_contentId: string, _decision: 'ACCEPTED' | 'REJECTED') {
-    throw ApiError.notImplemented('consolidation.setDecision');
+
+  // FR-CC-14
+  async editContent(userId: number, contentId: string, text: string) {
+    const c = await this.loadOwned(userId, contentId);
+    const row = await prisma.consolidatedContent.update({
+      where: { id: c.id },
+      data: { contentText: text, reviewStatus: c.isManual ? 'ACCEPTED' : 'EDITED', reviewedBy: userId, reviewedAt: new Date() },
+    });
+    await audit(userId, 'CONTENT_EDITED', 'ConsolidatedContent', c.id);
+    return { id: row.id, reviewStatus: row.reviewStatus };
   },
-  async addManualContent(_courseId: string, _fileSectionId: string, _text: string) {
-    throw ApiError.notImplemented('consolidation.addManualContent');
+
+  // FR-CC-15
+  async setDecision(userId: number, contentId: string, decision: 'ACCEPTED' | 'REJECTED') {
+    const c = await this.loadOwned(userId, contentId);
+    const row = await prisma.consolidatedContent.update({ where: { id: c.id }, data: { reviewStatus: decision, reviewedBy: userId, reviewedAt: new Date() } });
+    await audit(userId, `CONTENT_${decision}`, 'ConsolidatedContent', c.id);
+    return { id: row.id, reviewStatus: row.reviewStatus };
+  },
+
+  // FR-CC-16: coordinator-written content, kept separate from AI content (isManual).
+  async addManualContent(userId: number, courseId: string, templateSectionId: string, text: string) {
+    const offering = await assertCoordinator(userId, courseId);
+    const courseFile = await ensureCourseFile(offering.id);
+    const ts = await prisma.templateSection.findFirst({ where: { id: toId(templateSectionId), templateId: courseFile.templateId } });
+    if (!ts) throw ApiError.notFound('Section not found');
+    const existing = await prisma.consolidatedContent.findFirst({ where: { courseFileId: courseFile.id, templateSectionId: ts.id, isManual: true } });
+    if (existing) {
+      await prisma.consolidatedContent.update({ where: { id: existing.id }, data: { contentText: text, generatedBy: userId, reviewedBy: userId, reviewedAt: new Date() } });
+      return { id: existing.id };
+    }
+    const row = await prisma.consolidatedContent.create({
+      data: { courseFileId: courseFile.id, templateSectionId: ts.id, title: ts.title, type: 'SECTION_TEXT', contentText: text, isManual: true, isAiGenerated: false, generatedBy: userId, reviewStatus: 'ACCEPTED', reviewedBy: userId, reviewedAt: new Date() },
+    });
+    return { id: row.id };
   },
 };

@@ -13,7 +13,10 @@ const router = Router();
 router.use(authenticate, requireRole(ROLES.ADMIN));
 
 const createSchema = z.object({
-  name: z.string().min(1),
+  employeeId: z.string().min(1),
+  fullName: z.string().min(1),
+  department: z.string().optional(),
+  designation: z.string().optional(),
   email: z.string().email(),
   password: z.string().min(8),
   role: z.enum([ROLES.ADMIN, ROLES.FACULTY, ROLES.COURSE_COORDINATOR]),

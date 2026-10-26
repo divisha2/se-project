@@ -1,23 +1,25 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import Courses from './pages/Courses'
 import CourseDetail from './pages/CourseDetail'
+import Users from './pages/Users'
 import Layout from './components/Layout'
+import { ROLES } from './api'
+
+function readSession() {
+  try {
+    const token = localStorage.getItem('token')
+    const user = JSON.parse(localStorage.getItem('user') || 'null')
+    return token && user ? user : null
+  } catch {
+    return null
+  }
+}
 
 function App() {
-  const [user, setUser] = useState(null)
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    const token = localStorage.getItem('token')
-    const userData = localStorage.getItem('user')
-    if (token && userData) {
-      setUser(JSON.parse(userData))
-    }
-    setLoading(false)
-  }, [])
+  const [user, setUser] = useState(readSession)
 
   const login = (token, userData) => {
     localStorage.setItem('token', token)
@@ -31,14 +33,6 @@ function App() {
     setUser(null)
   }
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-2xl gradient-text">Loading...</div>
-      </div>
-    )
-  }
-
   return (
     <BrowserRouter>
       <Routes>
@@ -48,7 +42,9 @@ function App() {
           <Route path="dashboard" element={<Dashboard user={user} />} />
           <Route path="courses" element={<Courses user={user} />} />
           <Route path="courses/:id" element={<CourseDetail user={user} />} />
+          {user?.role === ROLES.ADMIN && <Route path="users" element={<Users />} />}
         </Route>
+        <Route path="*" element={<Navigate to="/" />} />
       </Routes>
     </BrowserRouter>
   )

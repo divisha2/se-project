@@ -9,7 +9,9 @@ export const upload = multer({
   limits: { fileSize: env.MAX_FILE_SIZE_MB * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     // FR-FAC-09: reject unsupported file formats.
-    if ((ALLOWED_MIME_TYPES as readonly string[]).includes(file.mimetype)) return cb(null, true);
-    cb(ApiError.badRequest('Unsupported file format. Upload PDF or DOC/DOCX.'));
+    const okMime = (ALLOWED_MIME_TYPES as readonly string[]).includes(file.mimetype);
+    const okExt = /\.(pdf|docx?|xlsx?)$/i.test(file.originalname);
+    if (okMime && okExt) return cb(null, true);
+    cb(ApiError.badRequest('Unsupported file format. Upload PDF, DOC/DOCX or an Excel file.'));
   },
 });

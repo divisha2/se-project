@@ -15,7 +15,7 @@ router.use(authenticate, requireRole(ROLES.COURSE_COORDINATOR));
 // Trigger AI processing (async - returns 202 and runs through the job queue)
 router.post('/course/:courseId/run', asyncHandler(consolidationController.runForCourse));
 router.post(
-  '/course/:courseId/sections/:fileSectionId/run',
+  '/course/:courseId/sections/:templateSectionId/run',
   asyncHandler(consolidationController.runForSection),
 );
 
@@ -23,7 +23,7 @@ router.post(
 router.get('/course/:courseId/content', asyncHandler(consolidationController.listContent));
 router.post(
   '/course/:courseId/content',
-  validate(z.object({ fileSectionId: z.string().min(1), text: z.string().min(1) })),
+  validate(z.object({ templateSectionId: z.coerce.number().int().positive(), text: z.string().min(1) })),
   asyncHandler(consolidationController.addManualContent),
 );
 router.get('/content/:contentId/sources', asyncHandler(consolidationController.getSources));
