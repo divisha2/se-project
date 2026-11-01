@@ -12,8 +12,8 @@ const schema = z.object({
   JWT_SECRET: z.string().min(8),
   JWT_EXPIRES_IN: z.string().default('1d'),
 
-  SUPABASE_URL: z.string().url(),
-  SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
+  SUPABASE_URL: z.string().url().optional(),
+  SUPABASE_SERVICE_ROLE_KEY: z.string().optional().default(''),
   SUPABASE_STORAGE_BUCKET: z.string().default('course-file-documents'),
 
   MAX_FILE_SIZE_MB: z.coerce.number().default(20),

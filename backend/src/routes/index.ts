@@ -6,6 +6,7 @@ import courseFileRoutes from '../modules/course-file/courseFile.routes';
 import submissionRoutes from '../modules/submissions/submissions.routes';
 import consolidationRoutes from '../modules/consolidation/consolidation.routes';
 import generationRoutes from '../modules/generation/generation.routes';
+import storageRoutes from '../modules/storage/storage.routes';
 
 const router = Router();
 
@@ -20,5 +21,6 @@ router.use('/course-file', courseFileRoutes);
 router.use('/submissions', submissionRoutes);
 router.use('/consolidation', consolidationRoutes);
 router.use('/generation', generationRoutes);
+router.use('/storage', storageRoutes);
 
 export default router;

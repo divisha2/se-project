@@ -1,26 +1,57 @@
-import { STORAGE_BUCKET, supabase } from '../config/supabase';
+import path from 'path';
+import fs from 'fs/promises';
+import { STORAGE_BUCKET, supabase, isSupabaseStorageConfigured } from '../config/supabase';
 import { ApiError } from './ApiError';
 
 export const safeName = (name: string) => name.replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 120);
 
-export const uploadBuffer = async (path: string, buffer: Buffer, contentType: string) => {
-  const { error } = await supabase.storage.from(STORAGE_BUCKET).upload(path, buffer, {
-    contentType,
-    upsert: false,
+const LOCAL_STORAGE_DIR = path.resolve(process.cwd(), 'uploads');
+
+export const uploadBuffer = async (storagePath: string, buffer: Buffer, contentType: string) => {
+  if (isSupabaseStorageConfigured() && supabase) {
+    const { error } = await supabase.storage.from(STORAGE_BUCKET).upload(storagePath, buffer, {
+      contentType,
+      upsert: false,
+    });
+    if (error) throw new ApiError(502, `File storage failed: ${error.message}`);
+    return;
+  }
+
+  // Local filesystem storage fallback
+  const fullPath = path.join(LOCAL_STORAGE_DIR, storagePath);
+  await fs.mkdir(path.dirname(fullPath), { recursive: true });
+  await fs.writeFile(fullPath, buffer);
+};
+
+export const downloadBuffer = async (storagePath: string): Promise<Buffer> => {
+  if (isSupabaseStorageConfigured() && supabase) {
+    const { data, error } = await supabase.storage.from(STORAGE_BUCKET).download(storagePath);
+    if (error || !data) throw new ApiError(502, `File download failed: ${error?.message ?? 'no data'}`);
+    return Buffer.from(await data.arrayBuffer());
+  }
+
+  // Local filesystem storage fallback
+  const fullPath = path.join(LOCAL_STORAGE_DIR, storagePath);
+  try {
+    return await fs.readFile(fullPath);
+  } catch (err: any) {
+    throw new ApiError(404, `Local file not found: ${storagePath}`);
+  }
+};
+
+export const signedUrl = async (storagePath: string, seconds = 300, downloadName?: string) => {
+  if (isSupabaseStorageConfigured() && supabase) {
+    const { data, error } = await supabase.storage
+      .from(STORAGE_BUCKET)
+      .createSignedUrl(storagePath, seconds, downloadName ? { download: downloadName } : undefined);
+    if (error || !data) throw new ApiError(502, `Could not create download link: ${error?.message ?? ''}`);
+    return data.signedUrl;
+  }
+
+  // Local filesystem storage fallback
+  const query = new URLSearchParams({
+    path: storagePath,
+    ...(downloadName ? { name: downloadName } : {}),
   });
-  if (error) throw new ApiError(502, `File storage failed: ${error.message}`);
-};
-
-export const downloadBuffer = async (path: string): Promise<Buffer> => {
-  const { data, error } = await supabase.storage.from(STORAGE_BUCKET).download(path);
-  if (error || !data) throw new ApiError(502, `File download failed: ${error?.message ?? 'no data'}`);
-  return Buffer.from(await data.arrayBuffer());
-};
-
-export const signedUrl = async (path: string, seconds = 300, downloadName?: string) => {
-  const { data, error } = await supabase.storage
-    .from(STORAGE_BUCKET)
-    .createSignedUrl(path, seconds, downloadName ? { download: downloadName } : undefined);
-  if (error || !data) throw new ApiError(502, `Could not create download link: ${error?.message ?? ''}`);
-  return data.signedUrl;
+  return `/api/storage/files?${query.toString()}`;
 };
