@@ -7,6 +7,8 @@ import { validate } from '../../middleware/validate';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { coursesController } from './courses.controller';
 
+import { upload } from '../../middleware/upload';
+
 const router = Router();
 
 router.use(authenticate);
@@ -67,5 +69,11 @@ router.put('/:courseId/institution', requireRole(ROLES.ADMIN), asyncHandler(cour
 // Course Coordinator: common course-level information (FR-CC-01)
 router.get('/:courseId/common-info', requireRole(ROLES.COURSE_COORDINATOR, ROLES.ADMIN), asyncHandler(coursesController.getCommonInfo));
 router.put('/:courseId/common-info', requireRole(ROLES.COURSE_COORDINATOR), asyncHandler(coursesController.updateCommonInfo));
+router.post(
+  '/:courseId/common-info/upload',
+  requireRole(ROLES.COURSE_COORDINATOR),
+  upload.single('file'),
+  asyncHandler(coursesController.uploadCommonDoc)
+);
 
 export default router;

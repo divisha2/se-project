@@ -3,6 +3,8 @@ import { ApiError } from '../../utils/ApiError';
 import { toId } from '../../services/access';
 import { getCommonSections } from '../../services/commonInfo';
 import { ensureCourseFile } from '../course-file/courseFile.service';
+import { uploadBuffer, safeName } from '../../utils/storage';
+import { extractText } from '../../utils/extractText';
 
 // NOTE: ":courseId" in these routes is a CourseOffering id (a course in a semester).
 //  FR-ADM-05..08 courses, sections, faculty assignment, coordinator   FR-CC-01 common info
@@ -227,5 +229,83 @@ export const coursesService = {
       }
     }
     return coursesService.getCommonInfo(courseId, { id: userId, role: 'COURSE_COORDINATOR' });
+  },
+
+  async uploadCommonDoc(courseId: string, templateSectionId: number, userId: number, file: Express.Multer.File) {
+    const o = await prisma.courseOffering.findUnique({
+      where: { id: toId(courseId) },
+      include: { course: true, semester: true, courseFile: true },
+    });
+    if (!o) throw ApiError.notFound('Course offering not found');
+    if (o.coordinatorId !== userId) throw ApiError.forbidden('Only the Course Coordinator can upload common documents');
+    const courseFile = o.courseFile ?? (await ensureCourseFile(o.id));
+
+    const ts = await prisma.templateSection.findFirst({
+      where: { id: templateSectionId, templateId: courseFile.templateId },
+    });
+    if (!ts) throw ApiError.notFound('Section not found');
+
+    const storagePath = `common/${o.course.code}/${o.semester.name.replace(/\s+/g, '')}/sec${ts.number}-${Date.now()}-${safeName(file.originalname)}`;
+    await uploadBuffer(storagePath, file.buffer, file.mimetype);
+
+    // Extract text with preserved table markdown
+    const extracted = await extractText(file.buffer, file.mimetype);
+    const contentText = extracted && extracted.trim().length > 0 ? extracted.trim() : `[File: ${file.originalname}]`;
+
+    const existing = await prisma.consolidatedContent.findFirst({
+      where: { courseFileId: courseFile.id, templateSectionId: ts.id },
+    });
+
+    let row;
+    if (existing) {
+      row = await prisma.consolidatedContent.update({
+        where: { id: existing.id },
+        data: {
+          contentText,
+          storagePath,
+          fileName: file.originalname,
+          mimeType: file.mimetype,
+          fileSizeBytes: BigInt(file.size),
+          isManual: true,
+          reviewStatus: 'ACCEPTED',
+          reviewedBy: userId,
+          reviewedAt: new Date(),
+          generatedBy: userId,
+          generatedAt: new Date(),
+        },
+      });
+    } else {
+      row = await prisma.consolidatedContent.create({
+        data: {
+          courseFileId: courseFile.id,
+          templateSectionId: ts.id,
+          title: ts.title,
+          type: 'SECTION_TEXT',
+          contentText,
+          storagePath,
+          fileName: file.originalname,
+          mimeType: file.mimetype,
+          fileSizeBytes: BigInt(file.size),
+          isManual: true,
+          reviewStatus: 'ACCEPTED',
+          reviewedBy: userId,
+          reviewedAt: new Date(),
+          generatedBy: userId,
+          generatedAt: new Date(),
+        },
+      });
+    }
+
+    return {
+      message: 'Common document uploaded and automatically accepted with no review required.',
+      section: {
+        templateSectionId: ts.id,
+        number: ts.number,
+        title: ts.title,
+        text: contentText,
+        fileName: file.originalname,
+        status: 'ACCEPTED',
+      },
+    };
   },
 };

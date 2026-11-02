@@ -8,4 +8,10 @@ export const generationController = {
   getLatest: async (req: Request, res: Response) => {
     res.json(await generationService.getLatest(req.user!.id, req.params.courseId));
   },
+  getEditor: async (req: Request, res: Response) => {
+    res.json(await generationService.getEditorData(req.user!.id, req.params.courseId));
+  },
+  saveSection: async (req: Request, res: Response) => {
+    res.json(await generationService.saveSection(req.user!.id, req.params.courseId, Number(req.params.sectionId), req.body.text ?? ''));
+  },
 };

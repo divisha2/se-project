@@ -1,14 +1,16 @@
-import { useCallback, useEffect, useState } from 'react'
-import { AlertTriangle, CheckCircle, History, Lock, RefreshCw, Sparkles, FileDown } from 'lucide-react'
+import { useCallback, useEffect, useState, useRef } from 'react'
+import { AlertTriangle, CheckCircle, History, Lock, RefreshCw, Sparkles, FileDown, Upload } from 'lucide-react'
 import api, { errMsg } from '../api'
 import { Badge, Modal, Notice, btn, fmt, input, toIso } from './ui'
 import { DownloadButton } from './FacultyWorkspace'
+import LiveCourseFileEditor from './LiveCourseFileEditor'
 
 const TABS = [
   ['overview', 'Overview'],
   ['submissions', 'Submissions'],
   ['common', 'Common info'],
   ['final', 'AI review and final file'],
+  ['editor', 'Live Document Editor'],
 ]
 
 function ReviewModal({ row, onClose, onDone }) {
@@ -205,28 +207,118 @@ function Submissions({ c, reload, courseId, setError, setInfo }) {
 function CommonInfo({ courseId, setError, setInfo }) {
   const [data, setData] = useState(null)
   const [edits, setEdits] = useState({})
-  const load = () => api.get(`/courses/${courseId}/common-info`).then(({ data }) => { setData(data); setEdits({}) }).catch((e) => setError(errMsg(e)))
-  useEffect(() => { load() }, [courseId])
+  const [uploading, setUploading] = useState({})
+  const fileRefs = useRef({})
+
+  const load = () =>
+    api
+      .get(`/courses/${courseId}/common-info`)
+      .then(({ data }) => {
+        setData(data)
+        setEdits({})
+      })
+      .catch((e) => setError(errMsg(e)))
+
+  useEffect(() => {
+    load()
+  }, [courseId])
+
   if (!data) return <div className="text-gray-400">Loading...</div>
 
   const save = async () => {
-    setError(''); setInfo('')
+    setError('')
+    setInfo('')
     try {
-      await api.put(`/courses/${courseId}/common-info`, { sections: Object.entries(edits).map(([id, text]) => ({ templateSectionId: Number(id), text })) })
-      setInfo('Common information saved.'); load()
-    } catch (e) { setError(errMsg(e)) }
+      await api.put(`/courses/${courseId}/common-info`, {
+        sections: Object.entries(edits).map(([id, text]) => ({ templateSectionId: Number(id), text })),
+      })
+      setInfo('Common information saved.')
+      load()
+    } catch (e) {
+      setError(errMsg(e))
+    }
+  }
+
+  const handleFileUpload = async (templateSectionId, file) => {
+    if (!file) return
+    setError('')
+    setInfo('')
+    setUploading((prev) => ({ ...prev, [templateSectionId]: true }))
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      fd.append('templateSectionId', templateSectionId)
+      const res = await api.post(`/courses/${courseId}/common-info/upload`, fd)
+      setInfo(res.data.message || 'Document uploaded and accepted without review.')
+      if (res.data.section?.text) {
+        setEdits((prev) => ({ ...prev, [templateSectionId]: res.data.section.text }))
+      }
+      load()
+    } catch (e) {
+      setError(`Upload failed: ${errMsg(e)}`)
+    } finally {
+      setUploading((prev) => ({ ...prev, [templateSectionId]: false }))
+      if (fileRefs.current[templateSectionId]) {
+        fileRefs.current[templateSectionId].value = ''
+      }
+    }
   }
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-gray-400">Filled once here, so faculty do not have to repeat it. Sections already known from the course record show their current text; typing here overrides it in the final file.</p>
+      <div className="glass rounded-xl p-4">
+        <h3 className="text-white font-semibold">Common Course Information (Sections 1–8)</h3>
+        <p className="text-xs text-gray-400 mt-1">
+          Filled by the Course Coordinator with <strong>direct approval (no review required)</strong>. You can upload documents (.docx, .pdf, .xlsx) or type directly. Any tables inside uploaded documents will be automatically preserved.
+        </p>
+      </div>
+
       {data.sections.map((s) => (
-        <div key={s.templateSectionId} className="glass rounded-xl p-4">
-          <div className="flex items-center justify-between mb-2"><span className="text-white font-medium">{s.number}. {s.title}</span><span className="text-xs text-gray-500">source: {s.source}</span></div>
-          <textarea className={input} rows={4} value={edits[s.templateSectionId] ?? s.text ?? ''} onChange={(e) => setEdits({ ...edits, [s.templateSectionId]: e.target.value })} />
+        <div key={s.templateSectionId} className="glass rounded-xl p-5 space-y-3">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-white font-medium">
+                {s.number}. {s.title}
+              </span>
+              <span className="text-[11px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                Direct Approval / No Review
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-500">source: {s.source}</span>
+              <input
+                type="file"
+                ref={(el) => (fileRefs.current[s.templateSectionId] = el)}
+                className="hidden"
+                accept=".docx,.pdf,.xlsx,.xls,.txt"
+                onChange={(e) => handleFileUpload(s.templateSectionId, e.target.files?.[0])}
+              />
+              <button
+                type="button"
+                disabled={uploading[s.templateSectionId]}
+                onClick={() => fileRefs.current[s.templateSectionId]?.click()}
+                className={`${btn.ghost} flex items-center gap-1.5 text-xs text-blue-300 hover:text-white border border-blue-500/30`}
+                title="Upload DOCX, PDF, or XLSX (tables preserved, auto-accepted)"
+              >
+                <Upload size={13} />
+                {uploading[s.templateSectionId] ? 'Extracting...' : 'Upload Document'}
+              </button>
+            </div>
+          </div>
+          <textarea
+            className={`${input} font-mono text-xs`}
+            rows={5}
+            value={edits[s.templateSectionId] ?? s.text ?? ''}
+            onChange={(e) => setEdits({ ...edits, [s.templateSectionId]: e.target.value })}
+            placeholder="Type content or click 'Upload Document' above..."
+          />
         </div>
       ))}
-      <div className="flex justify-end"><button className={btn.primary} disabled={!Object.keys(edits).length} onClick={save}>Save changes</button></div>
+      <div className="flex justify-end">
+        <button className={btn.primary} disabled={!Object.keys(edits).length} onClick={save}>
+          Save changes
+        </button>
+      </div>
     </div>
   )
 }
@@ -379,6 +471,7 @@ export default function CoordinatorWorkspace({ courseId }) {
       {tab === 'submissions' && <Submissions c={c} reload={load} courseId={courseId} setError={setError} setInfo={setInfo} />}
       {tab === 'common' && <CommonInfo courseId={courseId} setError={setError} setInfo={setInfo} />}
       {tab === 'final' && <AiAndFinal courseId={courseId} c={c} setError={setError} setInfo={setInfo} />}
+      {tab === 'editor' && <LiveCourseFileEditor courseId={courseId} setError={setError} setInfo={setInfo} />}
     </div>
   )
 }

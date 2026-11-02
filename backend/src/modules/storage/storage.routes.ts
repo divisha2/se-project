@@ -2,9 +2,9 @@ import { Router } from 'express';
 import path from 'path';
 import fs from 'fs';
 import { ApiError } from '../../utils/ApiError';
+import { getLocalStorageDir } from '../../utils/storage';
 
 const router = Router();
-const LOCAL_STORAGE_DIR = path.resolve(process.cwd(), 'uploads');
 
 router.get('/files', (req, res, next) => {
   const relativePath = req.query.path as string;
@@ -14,9 +14,10 @@ router.get('/files', (req, res, next) => {
     return next(ApiError.badRequest('Missing path parameter'));
   }
 
+  const localStorageDir = getLocalStorageDir();
   // Prevent directory traversal attacks
-  const resolved = path.resolve(LOCAL_STORAGE_DIR, relativePath);
-  if (!resolved.startsWith(LOCAL_STORAGE_DIR)) {
+  const resolved = path.resolve(localStorageDir, relativePath);
+  if (!resolved.startsWith(localStorageDir)) {
     return next(ApiError.forbidden('Access denied'));
   }
 

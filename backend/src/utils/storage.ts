@@ -5,7 +5,11 @@ import { ApiError } from './ApiError';
 
 export const safeName = (name: string) => name.replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 120);
 
-const LOCAL_STORAGE_DIR = path.resolve(process.cwd(), 'uploads');
+export const getLocalStorageDir = () => {
+  return path.basename(process.cwd()).toLowerCase() === 'backend'
+    ? path.resolve(process.cwd(), 'uploads')
+    : path.resolve(process.cwd(), 'backend', 'uploads');
+};
 
 export const uploadBuffer = async (storagePath: string, buffer: Buffer, contentType: string) => {
   if (isSupabaseStorageConfigured() && supabase) {
@@ -18,7 +22,7 @@ export const uploadBuffer = async (storagePath: string, buffer: Buffer, contentT
   }
 
   // Local filesystem storage fallback
-  const fullPath = path.join(LOCAL_STORAGE_DIR, storagePath);
+  const fullPath = path.join(getLocalStorageDir(), storagePath);
   await fs.mkdir(path.dirname(fullPath), { recursive: true });
   await fs.writeFile(fullPath, buffer);
 };
@@ -31,7 +35,7 @@ export const downloadBuffer = async (storagePath: string): Promise<Buffer> => {
   }
 
   // Local filesystem storage fallback
-  const fullPath = path.join(LOCAL_STORAGE_DIR, storagePath);
+  const fullPath = path.join(getLocalStorageDir(), storagePath);
   try {
     return await fs.readFile(fullPath);
   } catch (err: any) {

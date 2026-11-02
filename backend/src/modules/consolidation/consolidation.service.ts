@@ -20,8 +20,9 @@ const key = (o: number, t: number) => `${o}:${t}`;
 const SYSTEM_PROMPT =
   'You consolidate Course File material that several faculty members submitted for one section of a university course. ' +
   'Use ONLY facts present in the documents. Do not invent facts, numbers, names or dates. ' +
-  'Merge information that repeats across faculty into one statement. Keep real differences between sections/faculty and label them (e.g. "Section B: ..."). ' +
-  'Write clear plain text with short paragraphs or simple lists. No preamble, no markdown headings.';
+  'CRITICAL INSTRUCTION FOR TABLES: If any submitted document contains a table (indicated by Markdown pipe format `| Col 1 | Col 2 |` or tabbed columns such as marks, rubrics, schedules, attendance, question mapping, CO attainments), YOU MUST PRESERVE ALL TABLES EXACTLY AS TABLES IN MARKDOWN FORMAT. Do NOT delete tables, do NOT summarize tables into text, and do NOT remove rows. ' +
+  'Merge repetitive narrative information into clear statements. Keep real differences between sections/faculty and label them (e.g. "Section B: ..."). ' +
+  'No conversational preamble, no markdown headings.';
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
 const jaccard = (a: Set<string>, b: Set<string>) => {
@@ -29,18 +30,49 @@ const jaccard = (a: Set<string>, b: Set<string>) => {
   return inter / (a.size + b.size - inter || 1);
 };
 
-// Deterministic fallback: drop repeated paragraphs, label what remains by section.
+// Deterministic fallback: preserve tables intact, drop repeated narrative paragraphs.
 function fallbackConsolidate(docs: { label: string; text: string }[]): string {
-  const kept: { tokens: Set<string>; label: string; text: string }[] = [];
+  const results: string[] = [];
+
   for (const d of docs) {
-    for (const para of d.text.split(/\n{2,}/).map((p) => p.trim()).filter((p) => p.length > 15)) {
-      const tokens = new Set(norm(para).split(' '));
-      if (kept.some((k) => jaccard(k.tokens, tokens) >= 0.8)) continue;
-      kept.push({ tokens, label: d.label, text: para });
+    const lines = d.text.split('\n');
+    const sections: string[] = [];
+    let currentTable: string[] = [];
+    let currentNarrative: string[] = [];
+
+    const flushTable = () => {
+      if (currentTable.length > 0) {
+        sections.push(currentTable.join('\n'));
+        currentTable = [];
+      }
+    };
+    const flushNarrative = () => {
+      if (currentNarrative.length > 0) {
+        sections.push(currentNarrative.join('\n'));
+        currentNarrative = [];
+      }
+    };
+
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (line.startsWith('|')) {
+        flushNarrative();
+        currentTable.push(line);
+      } else {
+        flushTable();
+        if (line) currentNarrative.push(rawLine);
+      }
+    }
+    flushTable();
+    flushNarrative();
+
+    if (sections.length > 0) {
+      const joined = sections.join('\n\n');
+      results.push(docs.length > 1 ? `### ${d.label}\n\n${joined}` : joined);
     }
   }
-  const labels = new Set(kept.map((k) => k.label));
-  return kept.map((k) => (labels.size > 1 ? `[${k.label}] ${k.text}` : k.text)).join('\n\n');
+
+  return results.join('\n\n');
 }
 
 async function consolidateSection(offeringId: number, templateSectionId: number, userId: number, force: boolean) {

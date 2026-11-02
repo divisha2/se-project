@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { coursesService } from './courses.service';
+import { ApiError } from '../../utils/ApiError';
 
 export const coursesController = {
   
@@ -46,5 +47,11 @@ list: async (req: Request, res: Response) => {
   },
   updateCommonInfo: async (req: Request, res: Response) => {
     res.json(await coursesService.updateCommonInfo(req.params.courseId, req.user!.id, req.body));
+  },
+  uploadCommonDoc: async (req: Request, res: Response) => {
+    if (!req.file) throw ApiError.badRequest('File is required');
+    const templateSectionId = Number(req.body.templateSectionId);
+    if (!templateSectionId) throw ApiError.badRequest('templateSectionId is required');
+    res.status(201).json(await coursesService.uploadCommonDoc(req.params.courseId, templateSectionId, req.user!.id, req.file));
   },
 };

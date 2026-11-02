@@ -11,5 +11,7 @@ router.use(authenticate, requireRole(ROLES.COURSE_COORDINATOR));
 
 router.post('/course/:courseId', asyncHandler(generationController.generate));
 router.get('/course/:courseId/latest', asyncHandler(generationController.getLatest));
+router.get('/course/:courseId/editor', asyncHandler(generationController.getEditor));
+router.put('/course/:courseId/editor/section/:sectionId', asyncHandler(generationController.saveSection));
 
 export default router;
